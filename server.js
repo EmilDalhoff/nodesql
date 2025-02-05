@@ -1,7 +1,8 @@
 // Imports
 import express from "express";
-import cors from "cors";
 import db from "./database.js";
+import cors from "cors";
+import { ObjectId } from "mongodb";
 
 // ========== Setup ========== //
 
@@ -10,61 +11,181 @@ const server = express();
 const PORT = process.env.PORT || 3000;
 
 // Configure middleware
-server.use(express.json()); // to parse JSON bodies
-server.use(cors()); // Enable CORS for all routes
+server.use(express.json());
+server.use(cors());
 
 // ========== Routes ========== //
 
 // Root route
 server.get("/", async (req, res) => {
-  // Check database connection
-  const result = await db.ping();
+  const adminDb = db.admin();
+  const result = await adminDb.command({ ping: 1 });
+  console.log("✅ MongoDB Ping Successful:", result);
+  res.send(
+    "Node.js REST API with Express.js successfully connected to MongoDB!"
+  );
+});
+// ========== CRUD ========== //
 
-  if (result) {
-    res.send("Node.js REST API with Express.js - connected to database ✨");
-  } else {
-    res.status(500).send("Error connecting to database");
+// GET “/contacts” - read all contacts
+server.get("/contacts", async (req, res) => {
+  const contacts = await db
+    .collection("contacts")
+    .find()
+    .sort({ first: 1, last: 1 })
+    .toArray();
+  res.json(contacts);
+});
+
+// GET “/contacts/:id” - read one contact by id
+server.get("/contacts/:id", async (req, res) => {
+  const contactId = req.params.id;
+
+  // Check if the ObjectId is valid
+  if (!ObjectId.isValid(contactId)) {
+    return res.status(400).json({ error: "Invalid contact ID format" });
   }
+
+  const contact = await db
+    .collection("contacts")
+    .findOne({ _id: new ObjectId(contactId) });
+
+  if (!contact) {
+    return res.status(404).json({ error: "Contact not found" });
+  }
+  res.json(contact);
 });
 
-// Start server on port 3000
-server.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+// POST “/contacts” - create a new contact
+server.post("/contacts", async (req, res) => {
+  const { avatar, first, last, twitter } = req.body;
+  const result = await db
+    .collection("contacts")
+    .insertOne({ avatar, first, last, twitter });
+  res.json({ _id: result.insertedId });
 });
-// Users route
-server.get("/users", async (req, res) => {
+
+// PUT “/contacts/:id” - update existing contact by id
+server.put("/contacts/:id", async (req, res) => {
+  const contactId = req.params.id;
+
+  // Check if the ObjectId is valid
+  if (!ObjectId.isValid(contactId)) {
+    return res.status(400).json({ error: "Invalid contact ID format" });
+  }
+
+  const { avatar, first, last, twitter } = req.body;
+  const result = await db
+    .collection("contacts")
+    .updateOne(
+      { _id: new ObjectId(contactId) },
+      { $set: { avatar, first, last, twitter } }
+    );
+
+  if (result.matchedCount === 0) {
+    return res.status(404).json({ error: "Contact not found" });
+  }
+
+  res.json({ _id: contactId });
+});
+
+// DELETE “/contacts/:id” - delete existing contact by id
+server.delete("/contacts/:id", async (req, res) => {
+  const contactId = req.params.id;
+
+  // Check if the ObjectId is valid
+  if (!ObjectId.isValid(contactId)) {
+    return res.status(400).json({ error: "Invalid contact ID format" });
+  }
+
+  const result = await db
+    .collection("contacts")
+    .deleteOne({ _id: new ObjectId(contactId) });
+
+  if (result.deletedCount === 0) {
+    return res.status(404).json({ error: "Contact not found" });
+  }
+  res.json({ _id: contactId });
+});
+
+// GET “contacts/search” - search contacts
+server.get("/contacts/search", async (req, res) => {
+  const searchQuery = new RegExp(req.query.q, "i");
+  const contacts = await db
+    .collection("contacts")
+    .find({
+      $or: [
+        { first: searchQuery },
+        { last: searchQuery },
+        { twitter: searchQuery },
+      ],
+    })
+    .toArray();
+  res.json(contacts);
+});
+
+// PUT “/contacts/:id/favorite” - toggle favorite status
+server.put("/contacts/:id/favorite", async (req, res) => {
+  const contactId = req.params.id;
+
+  // Check if the ObjectId is valid
+  if (!ObjectId.isValid(contactId)) {
+    return res.status(400).json({ error: "Invalid contact ID format" });
+  }
+
   try {
-    const query = "SELECT * FROM users"; // SQL-query til at hente alle brugere
-    const [users] = await db.query(query); // Kører SQL-forespørgslen
-    res.json(users); // Returnerer brugerne som JSON
+    const contact = await db
+      .collection("contacts")
+      .findOne({ _id: new ObjectId(contactId) });
+
+    if (!contact) {
+      return res.status(404).json({ error: "Contact not found" });
+    }
+
+    // Toggle the favorite status
+    const newFavorite = !contact.favorite;
+
+    // Update the favorite status in the database
+    await db
+      .collection("contacts")
+      .updateOne(
+        { _id: new ObjectId(contactId) },
+        { $set: { favorite: newFavorite } }
+      );
+
+    res.json({
+      message: `Contact ${contactId} favorite status toggled to ${newFavorite}`,
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).send("Error fetching users");
+    res
+      .status(500)
+      .json({ error: "An error occurred while toggling the favorite status" });
   }
 });
 
-server.get("/users/:id", async (req, res) => {
-  const id = req.params.id;
-  const query = "SELECT * FROM users WHERE id = ?";
-  const values = [id];
-  const [users] = await db.query(query, values);
-  console.log(users);
-  res.json(users[0]);
+// GET “/contacts/favorites” - get all favorite contacts
+server.get("/contacts/favorites", async (_, res) => {
+  try {
+    const contacts = await db
+      .collection("contacts")
+      .find({ favorite: true })
+      .toArray();
+
+    if (contacts.length === 0) {
+      return res.status(404).json({ message: "No favorite contacts found" });
+    }
+
+    res.json(contacts);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ error: "An error occurred while fetching favorite contacts" });
+  }
 });
 
-app.post("/users", async (req, res) => {
-  const user = request.body;
-  const query =
-    "INSERT INTO users (name, mail, title, image) VALUES (?, ?, ?, ?);";
-  const values = [user.name, user.mail, user.title, user.image];
-  const [result] = await db.query(query, values);
-  response.json(result);
-});
+// ========== Start server ========== //
 
-server.delete("/users/:id", async (req, res) => {
-  const id = req.params.id;
-  const query = "DELETE FROM users WHERE id = ?";
-  const values = [id];
-  const [result] = await db.query(query, values);
-  res.json(result);
+// Start server on PORT
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });

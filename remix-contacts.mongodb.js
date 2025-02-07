@@ -253,3 +253,5 @@ db.contacts.insertOne({
   last: "User",
   twitter: "@testuser",
 });
+use("remix_contacts");
+db.contacts.updateMany({}, { $set: { notes: "New note content" } });

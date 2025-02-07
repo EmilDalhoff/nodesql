@@ -74,21 +74,20 @@ server.put("/contacts/:id", async (req, res) => {
     return res.status(400).json({ error: "Invalid contact ID format" });
   }
 
-  const { avatar, first, last, twitter } = req.body;
-  const result = await db
-    .collection("contacts")
-    .updateOne(
-      { _id: new ObjectId(contactId) },
-      { $set: { avatar, first, last, twitter } }
-    );
+  // Extract all possible fields from request body, including notes
+  const { avatar, first, last, twitter, notes } = req.body;
+
+  const result = await db.collection("contacts").updateOne(
+    { _id: new ObjectId(contactId) },
+    { $set: { avatar, first, last, twitter, notes } } // Now includes "notes"
+  );
 
   if (result.matchedCount === 0) {
     return res.status(404).json({ error: "Contact not found" });
   }
 
-  res.json({ _id: contactId });
+  res.json({ _id: contactId, message: "Contact updated successfully" });
 });
-
 // DELETE “/contacts/:id” - delete existing contact by id
 server.delete("/contacts/:id", async (req, res) => {
   const contactId = req.params.id;
